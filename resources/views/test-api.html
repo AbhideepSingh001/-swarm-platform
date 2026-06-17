@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Swarm API Test</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #1a1a2e; color: white; }
+        button { padding: 15px 30px; font-size: 18px; background: #e94560; color: white; border: none; cursor: pointer; border-radius: 5px; }
+        button:hover { background: #c13651; }
+        pre { background: #16213e; padding: 20px; border-radius: 5px; overflow: auto; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>🐝 Swarm Platform API Test</h1>
+    <button onclick="startSwarm()">Start Swarm Session</button>
+    <pre id="result">Click the button to start a swarm...</pre>
+
+    <script>
+        async function startSwarm() {
+            document.getElementById('result').textContent = 'Sending request...';
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/swarm/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('result').textContent = 'Error: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>
