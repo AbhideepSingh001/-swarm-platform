@@ -7,6 +7,7 @@ use App\Models\Agent as AgentModel;
 use App\Models\SwarmSession;
 use App\Services\SharedMemoryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Redis;
 use Tests\TestCase;
 
 class AgentBaseClassTest extends TestCase
@@ -197,57 +198,57 @@ class AgentBaseClassTest extends TestCase
     }
 
     public function test_agent_can_communicate(): void
-{
-    $concreteAgent = new class($this->agentModel, $this->sharedMemory) extends Agent {
-        protected string $role = 'tester';
+    {
+        $concreteAgent = new class($this->agentModel, $this->sharedMemory) extends Agent {
+            protected string $role = 'tester';
 
-        public function think(array $input): array
-        {
-            return [];
+            public function think(array $input): array
+            {
+                return [];
+            }
+
+            public function act(array $plan): array
+            {
+                return [];
+            }
+
+            public function communicate(string $to, string $messageType, array $payload): void
+            {
+                $this->sharedMemory->storeMessage(
+                    $this->sessionId,
+                    $this->role,
+                    $to,
+                    $messageType,
+                    $payload
+                );
+            }
+        };
+
+        // Send a message
+        $concreteAgent->communicate('coder', 'task_assignment', [
+            'task_id' => 1,
+            'title' => 'Build controller',
+        ]);
+
+        // Verify message exists in session state
+        $state = $this->sharedMemory->getSessionState($this->session->id);
+        $this->assertNotEmpty($state['messages']);
+
+        // Find the message from 'tester' (not just the first message)
+        $testerMessage = null;
+        foreach ($state['messages'] as $msg) {
+            if ($msg['from'] === 'tester') {
+                $testerMessage = $msg;
+                break;
+            }
         }
 
-        public function act(array $plan): array
-        {
-            return [];
-        }
-
-        public function communicate(string $to, string $messageType, array $payload): void
-        {
-            $this->sharedMemory->storeMessage(
-                $this->sessionId,
-                $this->role,
-                $to,
-                $messageType,
-                $payload
-            );
-        }
-    };
-
-    // Send a message
-    $concreteAgent->communicate('coder', 'task_assignment', [
-        'task_id' => 1,
-        'title' => 'Build controller',
-    ]);
-
-    // Verify message exists in session state
-    $state = $this->sharedMemory->getSessionState($this->session->id);
-    $this->assertNotEmpty($state['messages']);
-
-    // Find the message from 'tester' (not just the first message)
-    $testerMessage = null;
-    foreach ($state['messages'] as $msg) {
-        if ($msg['from'] === 'tester') {
-            $testerMessage = $msg;
-            break;
-        }
+        $this->assertNotNull($testerMessage, 'Message from tester agent not found');
+        $this->assertEquals('tester', $testerMessage['from']);
+        $this->assertEquals('coder', $testerMessage['to']);
+        $this->assertEquals('task_assignment', $testerMessage['type']);
+        $this->assertEquals('Build controller', $testerMessage['payload']['title']);
     }
-
-    $this->assertNotNull($testerMessage, 'Message from tester agent not found');
-    $this->assertEquals('tester', $testerMessage['from']);
-    $this->assertEquals('coder', $testerMessage['to']);
-    $this->assertEquals('task_assignment', $testerMessage['type']);
-    $this->assertEquals('Build controller', $testerMessage['payload']['title']);
-}
 
     public function test_agent_can_read_messages(): void
     {
@@ -290,7 +291,7 @@ class AgentBaseClassTest extends TestCase
         $this->assertEquals('planner', $first['from']);
     }
 
-    public function test_agent_can_log_actions(): void
+        public function test_agent_can_log_actions(): void
     {
         $concreteAgent = new class($this->agentModel, $this->sharedMemory) extends Agent {
             protected string $role = 'tester';
@@ -312,8 +313,25 @@ class AgentBaseClassTest extends TestCase
 
         $concreteAgent->log('task_started', ['task_id' => 5, 'priority' => 'high']);
 
-        // Verify log exists in Redis
+        // Verify log exists in Redis session state
         $state = $this->sharedMemory->getSessionState($this->session->id);
-        $this->assertNotEmpty($state['other'] ?? []); // Logs go to 'other' category
+        
+        // Logs are stored under 'agents' with keys like 'session:X:log:agent:role:hash'
+        $this->assertNotEmpty($state['agents'] ?? [], 'Expected agents data in session state');
+        
+        // Find the log entry for our agent
+        $agentLog = null;
+        foreach ($state['agents'] as $key => $value) {
+            if (str_contains($key, "log:agent:tester")) {
+                $agentLog = $value;
+                break;
+            }
+        }
+        
+        $this->assertNotNull($agentLog, 'Expected log entry for tester agent in agents data');
+        $this->assertEquals('tester', $agentLog['agent']);
+        $this->assertEquals('task_started', $agentLog['action']);
+        $this->assertEquals(['task_id' => 5, 'priority' => 'high'], $agentLog['details']);
+        $this->assertNotNull($agentLog['timestamp']);
     }
 }

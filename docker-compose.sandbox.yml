@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  sandbox-php:
+    build: ./docker/sandbox-php
+    image: sandbox-php:8.3
+    read_only: true
+    user: "1000:1000"
+    network_mode: none
+    mem_limit: 512m
+    cpus: '0.5'
+    pids_limit: 64
+
+  sandbox-python:
+    build: ./docker/sandbox-python
+    image: sandbox-python:3.12
+    read_only: true
+    user: "1000:1000"
+    network_mode: none
+    mem_limit: 512m
+    cpus: '0.5'
+    pids_limit: 64
+
+  sandbox-node:
+    build: ./docker/sandbox-node
+    image: sandbox-node:20
+    read_only: true
+    user: "1000:1000"
+    network_mode: none
+    mem_limit: 512m
+    cpus: '0.5'
+    pids_limit: 64
+
+  sandbox-alpine:
+    build: ./docker/sandbox-alpine
+    image: sandbox-alpine:latest
+    read_only: true
+    user: "1000:1000"
+    network_mode: none
+    mem_limit: 256m
+    cpus: '0.25'
+    pids_limit: 32

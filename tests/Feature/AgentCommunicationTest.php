@@ -6,11 +6,19 @@ use App\Models\SwarmSession;
 use App\Models\Agent;
 use App\Services\SharedMemoryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Redis;
 use Tests\TestCase;
 
 class AgentCommunicationTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Clear Redis before each test to prevent cross-test contamination
+        Redis::flushAll();
+    }
 
     public function test_agent_a_writes_agent_b_reads(): void
     {
@@ -62,7 +70,8 @@ class AgentCommunicationTest extends TestCase
         $this->assertStringContainsString('class User', $artifact['content']);
     }
 
-public function test_message_between_agents_is_stored(): void    {
+    public function test_message_between_agents_is_stored(): void
+    {
         $session = SwarmSession::create([
             'goal' => 'Test messaging',
             'status' => 'running',
@@ -81,10 +90,17 @@ public function test_message_between_agents_is_stored(): void    {
         $state = $memory->getSessionState($session->id);
         $this->assertNotEmpty($state['messages']);
 
-        // Get first message and check content
-        $firstMessage = array_values($state['messages'])[0];
-        $this->assertEquals('planner', $firstMessage['from']);
-        $this->assertEquals('coder', $firstMessage['to']);
-        $this->assertEquals('task_assignment', $firstMessage['type']);
+        // Find the specific message from planner to coder (don't assume order)
+        $messages = collect($state['messages'])->filter(
+            fn ($m) => $m['from'] === 'planner' && $m['to'] === 'coder'
+        )->values();
+
+        $this->assertCount(1, $messages, 'Expected exactly one message from planner to coder');
+        
+        $message = $messages->first();
+        $this->assertEquals('planner', $message['from']);
+        $this->assertEquals('coder', $message['to']);
+        $this->assertEquals('task_assignment', $message['type']);
+        $this->assertEquals(5, $message['payload']['task_id']);
     }
 }

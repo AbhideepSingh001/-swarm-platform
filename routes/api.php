@@ -6,6 +6,8 @@ use App\Http\Controllers\SwarmController;
 use App\Http\Controllers\TestController;   
 use App\Http\Controllers\PlanController;
 use App\Http\Controllers\Api\AgentMessageController;
+use App\Http\Controllers\AgentPresenceController;
+use App\Http\Controllers\Api\TaskController;
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
@@ -37,4 +39,33 @@ Route::prefix('messages')->group(function () {
     Route::post('/agent/{agentId}/subscribe', [AgentMessageController::class, 'subscribe']);
     Route::post('/agent/{agentId}/unsubscribe', [AgentMessageController::class, 'unsubscribe']);
     Route::get('/agent/{agentId}/history', [AgentMessageController::class, 'history']);
+});
+
+
+// Day 13: Agent Presence Routes
+Route::prefix('presence')->group(function () {
+    Route::post('/agent/{agentId}/online', [AgentPresenceController::class, 'online']);
+    Route::post('/agent/{agentId}/offline', [AgentPresenceController::class, 'offline']);
+    Route::post('/agent/{agentId}/heartbeat', [AgentPresenceController::class, 'heartbeat']);
+    Route::get('/agent/{agentId}/status', [AgentPresenceController::class, 'status']);
+    Route::get('/online', [AgentPresenceController::class, 'allOnline']);
+});
+
+
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::apiResource('tasks', TaskController::class);
+
+    Route::prefix('tasks')->group(function () {
+        Route::post('{task}/assign', [TaskController::class, 'assign']);
+        Route::post('{task}/accept', [TaskController::class, 'accept']);
+        Route::post('{task}/progress', [TaskController::class, 'progress']);
+        Route::post('{task}/complete', [TaskController::class, 'complete']);
+        Route::post('{task}/fail', [TaskController::class, 'fail']);
+        Route::post('{task}/dependencies', [TaskController::class, 'addDependency']);
+        Route::post('{task}/comments', [TaskController::class, 'addComment']);
+    });
+
+    Route::post('workflows', [TaskController::class, 'createWorkflow']);
+    Route::get('tasks/stats/overview', [TaskController::class, 'stats']);
 });

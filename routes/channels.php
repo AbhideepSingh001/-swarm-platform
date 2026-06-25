@@ -11,14 +11,17 @@ use Illuminate\Support\Facades\Broadcast;
 
 // Agent private channel - only the agent itself can listen
 Broadcast::channel('agent.{agentId}', function ($user, int $agentId) {
-    // You might want to check if the user owns this agent
-    // or if the agent's API token is valid
     $agent = Agent::find($agentId);
     
     return $agent !== null; // Add your auth logic here
 });
 
-// Swarm-wide channel
+// Swarm-wide channel (for messages, tasks, etc.)
 Broadcast::channel('swarm.{channel}', function ($user, string $channel) {
+    return true; // Add appropriate authorization
+});
+
+// Day 13: Swarm presence channel - who is online
+Broadcast::channel('swarm.presence', function ($user) {
     return true; // Add appropriate authorization
 });
