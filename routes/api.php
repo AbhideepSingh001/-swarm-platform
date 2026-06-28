@@ -3,11 +3,13 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SwarmController;
-use App\Http\Controllers\TestController;   
+use App\Http\Controllers\TestController;
 use App\Http\Controllers\PlanController;
 use App\Http\Controllers\Api\AgentMessageController;
 use App\Http\Controllers\AgentPresenceController;
 use App\Http\Controllers\Api\TaskController;
+use App\Http\Controllers\Api\AnalyticsController;
+use App\Http\Controllers\Api\ResultController;
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
@@ -28,9 +30,9 @@ Route::prefix('plans')->group(function () {
     Route::post('/{id}/cancel', [PlanController::class, 'cancel']);
     Route::post('/{id}/regenerate', [PlanController::class, 'regenerate']);
     Route::get('/system/key-status', [PlanController::class, 'keyStatus']);
-}); // <-- MUST CLOSE THE GROUP HERE
+});
 
-// Day 12: Message Bus Routes - MUST BE OUTSIDE the plans group
+// Day 12: Message Bus Routes
 Route::prefix('messages')->group(function () {
     Route::post('/publish', [AgentMessageController::class, 'publish']);
     Route::post('/direct', [AgentMessageController::class, 'sendDirect']);
@@ -41,7 +43,6 @@ Route::prefix('messages')->group(function () {
     Route::get('/agent/{agentId}/history', [AgentMessageController::class, 'history']);
 });
 
-
 // Day 13: Agent Presence Routes
 Route::prefix('presence')->group(function () {
     Route::post('/agent/{agentId}/online', [AgentPresenceController::class, 'online']);
@@ -50,8 +51,6 @@ Route::prefix('presence')->group(function () {
     Route::get('/agent/{agentId}/status', [AgentPresenceController::class, 'status']);
     Route::get('/online', [AgentPresenceController::class, 'allOnline']);
 });
-
-
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('tasks', TaskController::class);
@@ -68,4 +67,35 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::post('workflows', [TaskController::class, 'createWorkflow']);
     Route::get('tasks/stats/overview', [TaskController::class, 'stats']);
+});
+
+// Results Routes
+Route::prefix('results')->group(function () {
+    Route::get('/', [ResultController::class, 'index']);
+    Route::post('/', [ResultController::class, 'store']);
+    Route::get('/task/{task}', [ResultController::class, 'byTask']);
+    Route::get('/{id}', [ResultController::class, 'show']);
+    Route::put('/{id}', [ResultController::class, 'update']);
+    Route::delete('/{id}', [ResultController::class, 'destroy']);
+    Route::get('/{id}/logs', [ResultController::class, 'logs']);
+    Route::get('/{id}/artifacts', [ResultController::class, 'artifacts']);
+    Route::post('/{id}/artifacts', [ResultController::class, 'storeArtifact']);
+    Route::get('/{resultId}/artifacts/{artifactId}/download', [ResultController::class, 'downloadArtifact']);
+});
+
+// Analytics Routes
+Route::prefix('analytics')->group(function () {
+    Route::get('/task/{task}', [AnalyticsController::class, 'task']);
+    Route::get('/driver/{driver}', [AnalyticsController::class, 'driver']);
+    Route::get('/tasks', [AnalyticsController::class, 'taskMetrics']);
+    Route::get('/agents', [AnalyticsController::class, 'agentMetrics']);
+    Route::get('/workflows/{workflowExecutionId}', [AnalyticsController::class, 'workflowMetrics']);
+    Route::get('/workflows/{workflowId}/trend', [AnalyticsController::class, 'workflowTrend']);
+    Route::get('/drivers', [AnalyticsController::class, 'driverMetrics']);
+    Route::post('/drivers/compare', [AnalyticsController::class, 'compareDrivers']);
+    Route::get('/time-series', [AnalyticsController::class, 'timeSeries']);
+    Route::get('/dashboard', [AnalyticsController::class, 'dashboardSummary']);
+    Route::get('/summary', [AnalyticsController::class, 'summary']);
+    Route::get('/status-distribution', [AnalyticsController::class, 'statusDistribution']);
+    Route::get('/daily-trends', [AnalyticsController::class, 'dailyTrends']);
 });

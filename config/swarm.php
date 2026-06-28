@@ -18,4 +18,12 @@ return [
         'ls ',
         'grep ',
     ],
+    'result_store' => [
+        'driver' => env('SWARM_RESULT_STORE_DRIVER', 'database'),
+    ],
+    'artifacts' => [
+        'disk' => env('SWARM_ARTIFACTS_DISK', 'local'),
+        'path' => env('SWARM_ARTIFACTS_PATH', 'artifacts'),
+    ],
+
 ];
