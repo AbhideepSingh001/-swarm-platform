@@ -2,7 +2,7 @@
 
 use App\Models\Agent;
 use Illuminate\Support\Facades\Broadcast;
-
+require __DIR__.'/channels_workflows.php';
 /*
 |--------------------------------------------------------------------------
 | Broadcast Channels
