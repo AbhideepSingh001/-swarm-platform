@@ -10,6 +10,7 @@ use App\Http\Controllers\AgentPresenceController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\ResultController;
+use App\Http\Controllers\Api\WorkflowQueueController;
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
@@ -99,3 +100,9 @@ Route::prefix('analytics')->group(function () {
     Route::get('/status-distribution', [AnalyticsController::class, 'statusDistribution']);
     Route::get('/daily-trends', [AnalyticsController::class, 'dailyTrends']);
 });
+
+
+Route::post('/workflows/{id}/dispatch', [WorkflowQueueController::class, 'dispatch']);
+Route::get('/workflows/executions/{id}/poll', [WorkflowQueueController::class, 'poll']);
+Route::post('/workflows/executions/{id}/retry', [WorkflowQueueController::class, 'retry']);
+Route::get('/workflows/executions/{id}/metrics', [WorkflowQueueController::class, 'metrics']);

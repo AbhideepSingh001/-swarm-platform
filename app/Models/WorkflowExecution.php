@@ -18,6 +18,7 @@ class WorkflowExecution extends Model
         'checkpoint',
         'started_at',
         'finished_at',
+        'batch_id',        // ← ADD THIS
     ];
 
     protected $casts = [
@@ -26,6 +27,7 @@ class WorkflowExecution extends Model
         'checkpoint' => 'array',
         'started_at' => 'datetime',
         'finished_at' => 'datetime',
+
     ];
 
     public function workflow(): BelongsTo
