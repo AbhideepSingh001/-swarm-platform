@@ -163,7 +163,7 @@ class RetryManager
     private function calculateDelay(int $attempt): int
     {
         $base = $this->baseDelay * pow($this->backoffMultiplier, $attempt - 1);
-        $jitter = random_int(0, 1000) / 1000; // 0-1 second jitter
+        $jitter = random_int(0, 999) / 1000; // 0-0.999 second jitter
 
         return (int) min($this->maxDelay, $base + $jitter);
     }

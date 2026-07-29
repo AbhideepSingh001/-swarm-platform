@@ -13,6 +13,7 @@ return new class extends Migration
             $table->string('name')->unique();
             $table->string('description')->nullable();
             $table->json('config')->nullable();
+            $table->json('definition')->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();
         });

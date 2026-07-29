@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Swarm;
 
 use App\Jobs\Swarm\ExecuteWorkflowStep;
+use App\Models\WorkflowExecution;
 use Illuminate\Bus\Batch;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Log;
@@ -12,9 +13,57 @@ use Throwable;
 
 class WorkflowBatchMonitor
 {
+    private array $trackedExecutions = [];
+
     public function __construct(
         private readonly ?BatchBroadcastService $broadcaster = null,
     ) {}
+
+    public function track(WorkflowExecution $execution, string $batchId): void
+    {
+        $tracking = [
+            'batch_id' => $batchId,
+            'workflow_id' => $execution->swarm_workflow_id,
+            'tracked_at' => now()->toIso8601String(),
+        ];
+
+        $this->trackedExecutions[(string) $execution->id] = $tracking;
+
+        $execution->update([
+            'batch_id' => $batchId,
+            'checkpoint' => array_merge($execution->checkpoint ?? [], $tracking),
+        ]);
+    }
+
+    public function getTracking(WorkflowExecution $execution): ?array
+    {
+        if (isset($this->trackedExecutions[(string) $execution->id])) {
+            return $this->trackedExecutions[(string) $execution->id];
+        }
+
+        $checkpoint = $execution->fresh()->checkpoint ?? [];
+
+        return isset($checkpoint['batch_id'])
+            ? [
+                'batch_id' => $checkpoint['batch_id'],
+                'workflow_id' => $checkpoint['workflow_id'] ?? $execution->swarm_workflow_id,
+                'tracked_at' => $checkpoint['tracked_at'] ?? null,
+            ]
+            : null;
+    }
+
+    public function untrack(WorkflowExecution $execution): void
+    {
+        unset($this->trackedExecutions[(string) $execution->id]);
+
+        $checkpoint = $execution->checkpoint ?? [];
+        unset($checkpoint['batch_id'], $checkpoint['workflow_id'], $checkpoint['tracked_at']);
+
+        $execution->update([
+            'batch_id' => null,
+            'checkpoint' => $checkpoint,
+        ]);
+    }
 
     public function onLevelComplete(Batch $batch): void
     {

@@ -8,6 +8,7 @@ use App\Services\TaskOrchestrationService;
 use App\Services\Swarm\AsyncSwarmRunner;
 use App\Services\Swarm\WorkflowBatchMonitor;
 use App\Services\Swarm\BatchBroadcastService;
+use App\Services\Swarm\DAGResolver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -35,6 +36,7 @@ class AppServiceProvider extends ServiceProvider
 
         $this->app->singleton(AsyncSwarmRunner::class, function ($app) {
             return new AsyncSwarmRunner(
+                $app->make(DAGResolver::class),
                 $app->make(WorkflowBatchMonitor::class)
             );
         });

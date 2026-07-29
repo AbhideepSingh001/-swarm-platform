@@ -35,6 +35,11 @@ class WorkflowExecution extends Model
         return $this->belongsTo(SwarmWorkflow::class, 'swarm_workflow_id');
     }
 
+    public function swarmWorkflow(): BelongsTo
+    {
+        return $this->workflow();
+    }
+
     public function isPending(): bool
     {
         return $this->status === 'pending';

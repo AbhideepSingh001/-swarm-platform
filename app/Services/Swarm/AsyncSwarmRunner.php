@@ -1,252 +1,185 @@
 <?php
 
-declare(strict_types=1);
-
 namespace App\Services\Swarm;
 
-use App\Jobs\Swarm\ExecuteWorkflowStep;
-use Illuminate\Bus\Batch;
+use App\Models\SwarmWorkflow;
+use App\Models\WorkflowExecution;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Log;
-use Throwable;
+use RuntimeException;
 
 class AsyncSwarmRunner
 {
     public function __construct(
-        private readonly WorkflowBatchMonitor $batchMonitor,
+        protected DAGResolver $dagResolver,
+        protected WorkflowBatchMonitor $batchMonitor,
     ) {}
 
-    public function dispatch(string $workflowId, array $workflow, array $input = []): array
+    public function run(SwarmWorkflow $workflow, array $context = []): WorkflowExecution
     {
-        $execution = $this->createExecution($workflowId, $workflow, $input);
-        $executionId = (string) $execution['id'];
-
-        Log::info('AsyncSwarmRunner: dispatching workflow', [
-            'execution_id' => $executionId,
-            'workflow_id' => $workflowId,
-            'step_count' => count($workflow['steps'] ?? []),
+        $execution = WorkflowExecution::create([
+            'swarm_workflow_id' => $workflow->id,
+            'status' => 'pending',
+            'context' => $context,
         ]);
 
-        $levels = $this->resolveDagLevels($workflow);
+        $levels = $this->resolveLevels($workflow);
 
         if (empty($levels)) {
-            $this->updateExecutionStatus($executionId, 'completed', [
-                'progress_percent' => 100,
-                'message' => 'No steps to execute',
+            $execution->update(['status' => 'completed', 'finished_at' => now()]);
+            return $execution;
+        }
+
+        $this->dispatchLevel($execution, $levels, 0);
+
+        return $execution;
+    }
+
+    public function dispatch(string $workflowId, array $workflowDefinition, array $input = []): array
+    {
+        $workflow = SwarmWorkflow::find($workflowId);
+
+        if (! $workflow) {
+            $workflow = SwarmWorkflow::create([
+                'name' => $workflowDefinition['name'] ?? "Workflow {$workflowId}",
+                'definition' => $workflowDefinition,
+                'config' => [],
+                'is_active' => true,
             ]);
-
-            return [
-                'execution_id' => $executionId,
-                'status' => 'completed',
-                'batch_id' => null,
-            ];
+        } elseif (! empty($workflowDefinition)) {
+            $workflow->update(['definition' => $workflowDefinition]);
         }
 
-        $context = array_merge($input, [
-            '_workflow_id' => $workflowId,
-            '_execution_id' => $executionId,
-            '_levels' => $levels,
-        ]);
+        $execution = $this->run($workflow, array_merge($input, [
+            'workflow_snapshot' => $workflowDefinition,
+            'input' => $input,
+        ]));
 
-        $firstLevelSteps = $levels[0];
-        $nextLevelSteps = $levels[1] ?? [];
-        $totalLevels = count($levels);
-
-        $jobs = [];
-        foreach ($firstLevelSteps as $index => $step) {
-            $jobs[] = new ExecuteWorkflowStep(
-                executionId: $executionId,
-                step: $step,
-                context: $context,
-                levelIndex: 0,
-                stepIndex: $index,
-            );
-        }
-
-        $this->updateExecutionStatus($executionId, 'queued', [
-            'total_levels' => $totalLevels,
-            'total_steps' => array_sum(array_map('count', $levels)),
-            '_context' => $context,
-        ]);
-
-        $batchMonitor = $this->batchMonitor;
-
-        $batch = Bus::batch($jobs)
-            ->name("swarm-{$executionId}-level-0")
-            ->onQueue('swarm-steps')
-            ->then(function (Batch $batch) use ($batchMonitor, $executionId, $totalLevels, $nextLevelSteps, $context) {
-                $batch->options['execution_id'] = $executionId;
-                $batch->options['level_index'] = 0;
-                $batch->options['total_levels'] = $totalLevels;
-                $batch->options['next_level_steps'] = $nextLevelSteps;
-                $batch->options['context'] = $context;
-                $batchMonitor->onLevelComplete($batch);
-            })
-            ->catch(function (Batch $batch, Throwable $e) use ($batchMonitor, $executionId) {
-                $batch->options['execution_id'] = $executionId;
-                $batch->options['level_index'] = 0;
-                $batchMonitor->onLevelFailure($batch, $e);
-            })
-            ->finally(function (Batch $batch) use ($batchMonitor, $executionId, $totalLevels) {
-                $batch->options['execution_id'] = $executionId;
-                $batch->options['total_levels'] = $totalLevels;
-                $batchMonitor->onWorkflowComplete($batch);
-            })
-            ->dispatch();
-
-        $this->updateExecutionStatus($executionId, 'queued', [
-            'batch_id' => $batch->id,
-        ]);
+        $execution->refresh();
 
         return [
-            'execution_id' => $executionId,
-            'status' => 'queued',
-            'batch_id' => $batch->id,
+            'execution_id' => (string) $execution->id,
+            'status' => $execution->status,
+            'batch_id' => $execution->batch_id ?? ($execution->checkpoint['batch_id'] ?? null),
         ];
     }
 
-    public function resolveDagLevels(array $workflow): array
+    public function resolveLevels(SwarmWorkflow $workflow): array
     {
-        $steps = $workflow['steps'] ?? [];
-        $edges = $workflow['edges'] ?? [];
-
-        if (empty($steps)) {
-            return [];
-        }
-
-        $inDegree = [];
-        $dependents = [];
+        $steps = $this->stepsForWorkflow($workflow);
+        $graph = [];
 
         foreach ($steps as $step) {
-            $stepId = $step['id'];
-            $inDegree[$stepId] = 0;
-            $dependents[$stepId] = [];
+            $graph[$step['id'] ?? $step['name']] = $step['depends_on'] ?? [];
         }
 
-        foreach ($edges as $edge) {
-            $from = $edge['from'] ?? $edge['source'] ?? null;
-            $to = $edge['to'] ?? $edge['target'] ?? null;
-
-            if ($from && $to && isset($inDegree[$to])) {
-                $inDegree[$to]++;
-                $dependents[$from][] = $to;
-            }
-        }
-
-        $levels = [];
-        $assigned = [];
-        $queue = [];
-
-        foreach ($steps as $step) {
-            if ($inDegree[$step['id']] === 0) {
-                $queue[] = $step['id'];
-                $assigned[$step['id']] = 0;
-            }
-        }
-
-        while (! empty($queue)) {
-            $currentId = array_shift($queue);
-            $currentLevel = $assigned[$currentId];
-
-            if (! isset($levels[$currentLevel])) {
-                $levels[$currentLevel] = [];
-            }
-
-            foreach ($steps as $step) {
-                if ($step['id'] === $currentId) {
-                    $levels[$currentLevel][] = $step;
-                    break;
-                }
-            }
-
-            foreach ($dependents[$currentId] as $dependentId) {
-                $inDegree[$dependentId]--;
-                $newLevel = $currentLevel + 1;
-                $assigned[$dependentId] = max($assigned[$dependentId] ?? 0, $newLevel);
-
-                if ($inDegree[$dependentId] === 0) {
-                    $queue[] = $dependentId;
-                }
-            }
-        }
-
-        $processedCount = array_sum(array_map('count', $levels));
-        if ($processedCount !== count($steps)) {
-            $unprocessed = array_diff(
-                array_column($steps, 'id'),
-                array_keys($assigned)
-            );
-
-            Log::error('AsyncSwarmRunner: cycle detected in workflow DAG', [
-                'unprocessed_steps' => $unprocessed,
-            ]);
-
-            throw new \RuntimeException(
-                'Cycle detected in workflow DAG. Unprocessed steps: ' . implode(', ', $unprocessed)
-            );
-        }
-
-        return array_values($levels);
+        return $this->dagResolver
+            ->getExecutionLevels($graph)
+            ->map(fn ($level) => $level
+                ->map(fn ($stepId) => $this->findStepById($steps, $stepId))
+                ->values()
+                ->all())
+            ->values()
+            ->all();
     }
 
-    protected function createExecution(string $workflowId, array $workflow, array $input): array
+    public function cancel(WorkflowExecution $execution): bool
     {
-        try {
-            $execution = \App\Models\WorkflowExecution::create([
-                'swarm_workflow_id' => $workflowId,
-                'status' => 'pending',
-                'context' => array_merge($input, [
-                    'workflow_name' => $workflow['name'] ?? 'Untitled',
-                    'step_count' => count($workflow['steps'] ?? []),
-                ]),
+        if (in_array($execution->status, ['completed', 'failed', 'cancelled'])) {
+            return false;
+        }
+
+        $batchId = $execution->batch_id ?? ($execution->checkpoint['batch_id'] ?? null);
+
+        if (!empty($batchId)) {
+            try {
+                Bus::findBatch($batchId)?->cancel();
+            } catch (\Throwable $e) {
+                Log::warning('Failed to cancel batch', ['batch_id' => $batchId, 'error' => $e->getMessage()]);
+            }
+        }
+
+        $execution->update([
+            'status' => 'cancelled',
+            'finished_at' => now(),
+        ]);
+
+        return true;
+    }
+
+    protected function dispatchLevel(WorkflowExecution $execution, array $levels, int $levelIndex): void
+    {
+        if (!isset($levels[$levelIndex])) {
+            $execution->update(['status' => 'completed', 'finished_at' => now()]);
+            return;
+        }
+
+        $steps = $levels[$levelIndex];
+        $jobs = collect($steps)->map(function ($step) use ($execution) {
+            $jobClass = config('swarm.job_class', \App\Jobs\Swarm\ExecuteWorkflowStep::class);
+            return new $jobClass(
+                executionId: (string) $execution->id,
+                step: $step,
+                context: $execution->context ?? []
+            );
+        });
+
+        $batch = Bus::batch($jobs)
+            ->then(function ($batch) use ($execution, $levels, $levelIndex) {
+                $this->dispatchLevel($execution, $levels, $levelIndex + 1);
+            })
+            ->catch(function ($batch, $e) use ($execution) {
+                $execution->update(['status' => 'failed', 'finished_at' => now()]);
+                Log::error('Level batch failed', ['execution_id' => $execution->id, 'error' => $e->getMessage()]);
+            })
+            ->dispatch();
+
+        $this->batchMonitor->track($execution, $batch->id);
+
+        if ($levelIndex === 0) {
+            $execution->update([
+                'status' => 'running',
+                'started_at' => now(),
+                'batch_id' => $batch->id,
+                'checkpoint' => array_merge($execution->checkpoint ?? [], ['batch_id' => $batch->id]),
             ]);
-
-            return [
-                'id' => (string) $execution->id,
-                'swarm_workflow_id' => $workflowId,
-                'status' => 'pending',
-            ];
-        } catch (Throwable $e) {
-            Log::error('AsyncSwarmRunner: failed to create execution', [
-                'workflow_id' => $workflowId,
-                'error' => $e->getMessage(),
-            ]);
-
-            $tempId = 'exec-' . uniqid();
-
-            return [
-                'id' => $tempId,
-                'swarm_workflow_id' => $workflowId,
-                'status' => 'pending',
-            ];
         }
     }
 
-    protected function updateExecutionStatus(string $executionId, string $status, array $data = []): void
+    private function stepsForWorkflow(SwarmWorkflow $workflow): array
     {
-        try {
-            $execution = \App\Models\WorkflowExecution::find($executionId);
+        $definition = is_string($workflow->definition)
+            ? json_decode($workflow->definition, true)
+            : $workflow->definition;
 
-            if ($execution) {
-                $updateData = ['status' => $status];
-
-                if (isset($data['batch_id'])) {
-                    $updateData['batch_id'] = $data['batch_id'];
-                    unset($data['batch_id']);
-                }
-
-                if (! empty($data)) {
-                    $updateData['context'] = array_merge($execution->context ?? [], $data);
-                }
-
-                $execution->update($updateData);
-            }
-        } catch (Throwable $e) {
-            Log::warning('AsyncSwarmRunner: could not update execution', [
-                'execution_id' => $executionId,
-                'status' => $status,
-                'error' => $e->getMessage(),
-            ]);
+        if (! empty($definition['steps'])) {
+            return $definition['steps'];
         }
+
+        return $workflow->steps()
+            ->get()
+            ->map(fn ($step) => [
+                'id' => $step->name,
+                'name' => $step->name,
+                'agent_id' => $step->agent,
+                'task' => $step->task,
+                'config' => $step->config ?? [],
+                'depends_on' => $step->depends_on ?? [],
+                'retry' => [
+                    'max_attempts' => max(1, ($step->max_retries ?? 0) + 1),
+                ],
+            ])
+            ->all();
+    }
+
+    private function findStepById(array $steps, string $stepId): array
+    {
+        foreach ($steps as $step) {
+            if (($step['id'] ?? $step['name'] ?? null) === $stepId) {
+                return $step;
+            }
+        }
+
+        throw new RuntimeException("Step {$stepId} was not found in workflow");
     }
 }

@@ -10,10 +10,11 @@ class SwarmWorkflow extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['name', 'description', 'config', 'is_active'];
+    protected $fillable = ['name', 'description', 'config', 'definition', 'is_active'];
 
     protected $casts = [
         'config' => 'array',
+        'definition' => 'array',
         'is_active' => 'boolean',
     ];
 

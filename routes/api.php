@@ -11,6 +11,8 @@ use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\ResultController;
 use App\Http\Controllers\Api\WorkflowQueueController;
+use App\Http\Controllers\Api\DeadLetterController;
+
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
@@ -104,5 +106,20 @@ Route::prefix('analytics')->group(function () {
 
 Route::post('/workflows/{id}/dispatch', [WorkflowQueueController::class, 'dispatch']);
 Route::get('/workflows/executions/{id}/poll', [WorkflowQueueController::class, 'poll']);
+Route::get('/workflow-executions/{id}/status', [WorkflowQueueController::class, 'status']);
+Route::post('/workflow-executions/{id}/cancel', [WorkflowQueueController::class, 'cancel']);
 Route::post('/workflows/executions/{id}/retry', [WorkflowQueueController::class, 'retry']);
 Route::get('/workflows/executions/{id}/metrics', [WorkflowQueueController::class, 'metrics']);
+
+
+Route::middleware(['auth:sanctum'])->prefix('dead-letters')->group(function () {
+    Route::get('/', [DeadLetterController::class, 'index']);
+    Route::get('/{id}', [DeadLetterController::class, 'show']);
+    Route::post('/{id}/retry', [DeadLetterController::class, 'retry']);
+    Route::post('/{id}/skip', [DeadLetterController::class, 'skip']);
+    Route::post('/{id}/reassign', [DeadLetterController::class, 'reassign']);
+    Route::delete('/{id}', [DeadLetterController::class, 'dismiss']);
+
+    Route::get('/circuit-breakers/{agentId}', [DeadLetterController::class, 'circuitStatus']);
+    Route::post('/circuit-breakers/{agentId}/reset', [DeadLetterController::class, 'resetCircuit']);
+});

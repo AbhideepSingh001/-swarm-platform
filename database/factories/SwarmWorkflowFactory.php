@@ -15,6 +15,7 @@ class SwarmWorkflowFactory extends Factory
             'name' => $this->faker->unique()->slug(),
             'description' => $this->faker->sentence(),
             'config' => null,
+            'definition' => null,
             'is_active' => true,
         ];
     }

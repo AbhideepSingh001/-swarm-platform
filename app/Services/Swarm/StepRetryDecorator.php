@@ -11,6 +11,16 @@ use Throwable;
 
 class StepRetryDecorator
 {
+    public function execute(mixed $execution, object $step, Closure $callback): mixed
+    {
+        return $this->call(
+            $callback,
+            maxAttempts: ((int) ($step->max_retries ?? 0)) + 1,
+            baseDelayMs: 0,
+            useJitter: false,
+        );
+    }
+
     public function call(
         Closure $step,
         int $maxAttempts = 3,

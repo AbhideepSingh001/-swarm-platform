@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Services\Swarm\AsyncSwarmRunner;
+use App\Models\WorkflowExecution;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Bus;
@@ -109,6 +110,43 @@ class WorkflowQueueController
                 'error' => 'Failed to poll execution',
             ], 500);
         }
+    }
+
+    public function status(string $id): JsonResponse
+    {
+        $execution = WorkflowExecution::find($id);
+
+        if (! $execution) {
+            return response()->json(['message' => 'Execution not found'], 404);
+        }
+
+        return response()->json([
+            'execution_id' => $execution->id,
+            'workflow_id' => $execution->swarm_workflow_id,
+            'status' => $execution->status,
+            'results' => $execution->results ?? [],
+            'checkpoint' => $execution->checkpoint ?? [],
+        ]);
+    }
+
+    public function cancel(string $id): JsonResponse
+    {
+        $execution = WorkflowExecution::find($id);
+
+        if (! $execution) {
+            return response()->json(['message' => 'Execution not found'], 404);
+        }
+
+        if ($execution->isTerminal()) {
+            return response()->json(['message' => 'Workflow is already terminal'], 422);
+        }
+
+        $this->swarmRunner->cancel($execution);
+
+        return response()->json([
+            'execution_id' => $execution->id,
+            'status' => $execution->fresh()->status,
+        ]);
     }
 
     public function retry(Request $request, string $id): JsonResponse

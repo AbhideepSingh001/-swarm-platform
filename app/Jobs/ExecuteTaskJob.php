@@ -1,60 +1,81 @@
 <?php
 
-declare(strict_types=1);
-
 namespace App\Jobs;
 
-use App\Execution\Engine;
-use App\Models\Task;
+use App\Services\Swarm\CircuitBreaker;
+use App\Services\Swarm\DeadLetterQueue;
+use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Log;
+use Throwable;
 
-class ExecuteTaskJob implements ShouldQueue, ShouldBeUnique
+class ExecuteWorkflowStep implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries = 1; // We handle retries internally via RetryManager
-    public int $timeout = 300; // 5 minutes max
-    public ?string $uniqueFor = 600; // 10 minutes unique lock
+    public int $tries;
+    public int $backoff;
+    public bool $failOnTimeout = true;
 
-    public function __construct(public Task $task) {}
+    public function __construct(
+        public string $executionId,
+        public array $step,
+        public array $context = [],
+        public int $attempt = 0,
+    ) {
+        $this->tries = config('swarm.step_retries', 3);
+        $this->backoff = [10, 30, 60]; // seconds
+    }
 
-    public function uniqueId(): string
+    public function handle(): void
     {
-        return 'task-execution-' . $this->task->id;
+        $agentId = $this->step['agent_id'];
+
+        // Check circuit breaker before executing
+        if (app(CircuitBreaker::class)->isOpen($agentId)) {
+            $this->release(60); // Re-queue for 60s
+            return;
+        }
+
+        try {
+            // ... your existing step execution logic ...
+            $this->executeStep();
+
+            // Record success to reset circuit breaker
+            app(CircuitBreaker::class)->recordSuccess($agentId);
+
+        } catch (Throwable $e) {
+            // Record failure for circuit breaker tracking
+            app(CircuitBreaker::class)->recordFailure($agentId);
+
+            throw $e; // Re-throw so Laravel handles retries
+        }
     }
 
-   public function handle(Engine $engine): void
-{
-    if ($this->task->status === 'cancelled') {
-        Log::info("Task {$this->task->task_id} skipped — already cancelled");
-        return;
-    }
-
-    $result = $engine->run($this->task);
-
-    if (!$result->success && $this->task->retry_count < config('execution.max_attempts', 5)) {
-        $delay = min(60, pow(2, $this->task->retry_count));
-        self::dispatch($this->task->fresh())->delay(now()->addSeconds($delay));
-    }
-}
-
-    public function failed(\Throwable $exception): void
+    /**
+     * Called when all retries are exhausted.
+     */
+    public function failed(?Throwable $exception): void
     {
-        Log::error("ExecuteTaskJob failed for task {$this->task->id}", [
-            'error' => $exception->getMessage(),
-            'trace' => $exception->getTraceAsString(),
+        app(DeadLetterQueue::class)->record([
+            'execution_id' => $this->executionId,
+            'step_id' => $this->step['id'] ?? 'unknown',
+            'agent_id' => $this->step['agent_id'] ?? 'unknown',
+            'error' => $exception,
+            'step_config' => $this->step,
+            'context' => $this->context,
+            'retry_count' => $this->attempts(),
         ]);
 
-        $this->task->update([
-            'status' => 'failed',
-            'error' => 'Job failed: ' . $exception->getMessage(),
-            'completed_at' => now(),
-        ]);
+        // Optionally broadcast failure
+        // broadcast(new \App\Events\StepFailedEvent(...));
+    }
+
+    protected function executeStep(): void
+    {
+        // Your existing step logic
     }
 }

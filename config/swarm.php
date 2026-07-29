@@ -26,4 +26,11 @@ return [
         'path' => env('SWARM_ARTIFACTS_PATH', 'artifacts'),
     ],
 
+    'circuit_breaker' => [
+        'threshold' => env('SWARM_CIRCUIT_THRESHOLD', 5),
+        'cooldown_minutes' => env('SWARM_CIRCUIT_COOLDOWN', 5),
+    ],
+
+    'job_class' => \App\Jobs\Swarm\ExecuteWorkflowStep::class,
+
 ];
